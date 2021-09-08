@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	prsr "beprodigy.com/parser"
+	"beprodigy.com/utility"
 )
 
 var (
-	exception        []string
 	filelist         []string
 	fileChan         chan string
 	finish           string
@@ -22,12 +24,26 @@ func init() {
 	finish = "@@@done"
 	fileChan = make(chan string)
 	userContribution = make(map[string]int32, 100)
-	exception = []string{"vendor", "vendor-patched"}
 }
 func main() {
+	var mainerr error
+	var rankedList []utility.ContribV
+	params := os.Args[1:]
+	for _, param := range params {
+		mainerr = prsr.ProcessKeyVal(param)
+		if mainerr != nil {
+			fmt.Println(mainerr)
+		}
+	}
+	if len(prsr.Extensions) == 0 {
+		prsr.Extensions = append(prsr.Extensions, ".go")
+		prsr.Extensions = append(prsr.Extensions, ".c")
+		prsr.Extensions = append(prsr.Extensions, ".h")
+	}
 	rootdir, err := os.Getwd()
 	if err == nil {
 		var grp sync.WaitGroup
+		go utility.ShowProgressWheel()
 		grp.Add(1)
 		go walkDir(rootdir, true)
 		go populateFilieList(&grp)
@@ -35,13 +51,23 @@ func main() {
 		close(fileChan)
 		for _, vv := range filelist {
 			//time.Sleep(time.Second * 1)
-			if strings.HasSuffix(vv, ".go") || strings.HasSuffix(vv, ".h") || strings.HasSuffix(vv, ".c") {
+			if isExtensionCovered(vv) {
 				//fmt.Println(vv)
 				getGitStats(vv)
 			}
 		}
-		for user, contri := range userContribution {
-			fmt.Printf("%s==>%d\n ", user, contri)
+
+		utility.StopProgressWheel <- true
+		rankedList = utility.RankContributors(userContribution)
+		tsize := utility.ListSize
+		for _, contri := range rankedList {
+			u := len(contri.User)
+			space := tsize - u
+			ss := ""
+			for ii := 0; ii < space; ii++ {
+				ss = ss + " "
+			}
+			fmt.Printf("%s%s%d\n", contri.User, ss, contri.Contribution)
 		}
 	}
 
@@ -95,7 +121,7 @@ func populateFilieList(wg *sync.WaitGroup) {
 
 //IsExceptionDir checks against exception list
 func IsExceptionDir(dirname string) bool {
-	for _, v := range exception {
+	for _, v := range prsr.ExceptionFileDire {
 		if v == dirname {
 			return true
 		}
@@ -133,4 +159,12 @@ func walkDir(dir string, closeChan bool) {
 	if closeChan {
 		fileChan <- finish
 	}
+}
+func isExtensionCovered(filename string) bool {
+	for _, v := range prsr.Extensions {
+		if strings.HasSuffix(filename, v) {
+			return true
+		}
+	}
+	return false
 }
